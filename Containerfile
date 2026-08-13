@@ -46,25 +46,38 @@ RUN set -eux; \
     command -v psql; \
     command -v pg_isready
 
-# Fonts for PDF rendering. The wkhtmltopdf RPM installed below pulls its own
-# xorg-x11 DPI fonts as dependencies, so this is just for nicer default report
-# typography (Arial-metric-compatible). Best-effort — never fail the build.
-RUN dnf -y install --setopt=install_weak_deps=False liberation-sans-fonts \
-        liberation-serif-fonts liberation-mono-fonts \
-        || echo "liberation fonts unavailable — wkhtmltopdf's own fonts still render PDFs."; \
+# Fonts for PDF rendering. Since we install the wkhtmltopdf RPM with --nodeps
+# below (skipping its xorg font dependency), the liberation fonts here are the
+# system fonts wkhtmltopdf will actually use. They live in UBI 10's AppStream.
+RUN set -eux; \
+    dnf -y install --setopt=install_weak_deps=False \
+        liberation-sans-fonts liberation-serif-fonts liberation-mono-fonts \
+    || dnf -y install --setopt=install_weak_deps=False liberation-fonts-common liberation-sans-fonts \
+    || dnf -y install --setopt=install_weak_deps=False dejavu-sans-fonts; \
+    rpm -qa | grep -Ei 'liberation|dejavu' | head; \
     dnf clean all; \
     rm -rf /var/cache/dnf
 
 # ---------------------------------------------------------------------------
 # wkhtmltopdf 0.12.6 with patched Qt (required for headers/footers in reports).
-# The official wkhtmltopdf project ships a generic RHEL/CentOS build; we drop
-# the binary in and symlink it onto the PATH.
+#
+# The el9 RPM hard-requires xorg-x11-fonts-75dpi, which was dropped from EL10
+# and is absent in UBI 10's repos, so a plain `dnf install` fails. The binary
+# itself is statically linked against its bundled patched Qt and only needs a
+# handful of runtime libraries plus *a* system font (satisfied by the
+# liberation fonts installed above). We therefore install the real runtime
+# dependencies explicitly, then force-install the RPM with --nodeps to bypass
+# the unsatisfiable X11 bitmap-font requirement.
 # ---------------------------------------------------------------------------
 RUN set -eux; \
+    dnf -y install --setopt=install_weak_deps=False \
+        fontconfig freetype libpng libjpeg-turbo openssl-libs \
+        libX11 libXext libXrender zlib; \
+    dnf clean all; \
+    rm -rf /var/cache/dnf
+
+RUN set -eux; \
     ARCH="$(uname -m)"; \
-    # wkhtmltopdf RPM assets are named with the RPM arch (x86_64 / aarch64),
-    # not the Debian arch. This release's newest EL builds are almalinux9 /
-    # centos8; the bundled patched Qt makes the el9 RPM run fine on UBI 10.
     case "${ARCH}" in \
         x86_64|aarch64) WK_ARCH="${ARCH}" ;; \
         *) echo "Unsupported arch ${ARCH}"; exit 1 ;; \
@@ -77,9 +90,11 @@ RUN set -eux; \
         if curl -fsSL -o /tmp/wkhtmltox.rpm "${url}"; then ok="yes"; break; fi; \
     done; \
     test -n "${ok}"; \
-    dnf -y install /tmp/wkhtmltox.rpm; \
+    # --nodeps skips the phantom xorg-x11-fonts-75dpi requirement; the runtime
+    # libs it actually links against are installed in the layer above.
+    rpm -i --nodeps /tmp/wkhtmltox.rpm; \
     rm -f /tmp/wkhtmltox.rpm; \
-    dnf clean all; \
+    fc-cache -f; \
     wkhtmltopdf --version
 
 # ---------------------------------------------------------------------------
