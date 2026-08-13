@@ -1,0 +1,77 @@
+name: Build and Push Odoo Container
+
+on:
+  # Weekly rebuild to pick up UBI 10 security updates and Odoo branch fixes.
+  schedule:
+    - cron: "0 6 * * 1"   # Mondays 06:00 UTC
+  push:
+    branches: [ main ]
+    paths:
+      - "Containerfile"
+      - "entrypoint.sh"
+      - "odoo.conf"
+      - ".github/workflows/build-image.yml"
+  workflow_dispatch:
+    inputs:
+      odoo_version:
+        description: "Odoo major version branch to build (e.g. 19.0)"
+        required: false
+        default: "19.0"
+
+env:
+  IMAGE_REGISTRY: quay.io
+  IMAGE_NAMESPACE: ryan_nix
+  IMAGE_NAME: odoo-openshift
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Determine Odoo version
+        id: version
+        run: |
+          VER="${{ github.event.inputs.odoo_version }}"
+          VER="${VER:-19.0}"
+          echo "odoo_version=${VER}" >> "$GITHUB_OUTPUT"
+          # major.minor already; also derive major for a floating tag
+          echo "odoo_major=${VER%%.*}" >> "$GITHUB_OUTPUT"
+
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@v3
+
+      - name: Log in to Quay.io
+        uses: redhat-actions/podman-login@v1
+        with:
+          registry: ${{ env.IMAGE_REGISTRY }}
+          username: ${{ secrets.QUAY_USERNAME }}
+          password: ${{ secrets.QUAY_PASSWORD }}
+
+      - name: Build image
+        id: build
+        uses: redhat-actions/buildah-build@v3
+        with:
+          image: ${{ env.IMAGE_NAME }}
+          tags: >-
+            ${{ steps.version.outputs.odoo_version }}
+            ${{ steps.version.outputs.odoo_major }}
+            latest
+          archs: amd64
+          containerfiles: ./Containerfile
+          build-args: |
+            ODOO_VERSION=${{ steps.version.outputs.odoo_version }}
+
+      - name: Push to Quay.io
+        uses: redhat-actions/push-to-registry@v2
+        with:
+          image: ${{ steps.build.outputs.image }}
+          tags: ${{ steps.build.outputs.tags }}
+          registry: ${{ env.IMAGE_REGISTRY }}/${{ env.IMAGE_NAMESPACE }}
+
+      - name: Summary
+        run: |
+          echo "### Pushed Odoo image :rocket:" >> "$GITHUB_STEP_SUMMARY"
+          echo "" >> "$GITHUB_STEP_SUMMARY"
+          echo "\`${IMAGE_REGISTRY}/${IMAGE_NAMESPACE}/${IMAGE_NAME}:${{ steps.version.outputs.odoo_version }}\`" >> "$GITHUB_STEP_SUMMARY"

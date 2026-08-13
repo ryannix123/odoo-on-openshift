@@ -23,11 +23,14 @@ ENV ODOO_VERSION=${ODOO_VERSION} \
 # for PDF rendering.
 # ---------------------------------------------------------------------------
 # Some -devel headers (openldap-devel, libpq-devel) live in the CodeReady
-# Builder repo, which is available to UBI without a subscription.
-RUN dnf -y install --setopt=install_weak_deps=False dnf-plugins-core \
-    && dnf config-manager --set-enabled ubi-10-codeready-builder || true
-
-RUN dnf -y install --setopt=install_weak_deps=False \
+# Builder repo. On UBI 10 this repo is present but disabled; it's available
+# without a subscription and is enabled per-transaction with --enablerepo,
+# whose ID is codeready-builder-for-ubi-10-<arch>-rpms.
+RUN set -eux; \
+    ARCH="$(uname -m)"; \
+    CRB="codeready-builder-for-ubi-10-${ARCH}-rpms"; \
+    dnf -y install --setopt=install_weak_deps=False \
+        --enablerepo="${CRB}" \
         python3 python3-pip python3-devel \
         gcc gcc-c++ make \
         libxml2-devel libxslt-devel \
@@ -36,11 +39,21 @@ RUN dnf -y install --setopt=install_weak_deps=False \
         postgresql \
         libpq-devel \
         freetype-devel \
-        liberation-fonts \
-        google-noto-sans-cjk-fonts \
-        tar xz which \
-        && dnf clean all \
-        && rm -rf /var/cache/dnf
+        tar xz which; \
+    dnf clean all; \
+    rm -rf /var/cache/dnf; \
+    # The entrypoint's DB-wait and first-boot logic need these client tools.
+    command -v psql; \
+    command -v pg_isready
+
+# Fonts for PDF rendering. liberation-fonts covers Latin reports (Arial/Times
+# metric-compatible). CJK fonts are only needed for Asian-language PDFs and
+# aren't guaranteed in UBI repos, so install them best-effort.
+RUN dnf -y install --setopt=install_weak_deps=False liberation-fonts || true; \
+    dnf -y install --setopt=install_weak_deps=False google-noto-sans-cjk-fonts || \
+        echo "CJK fonts unavailable — Latin PDF rendering still works."; \
+    dnf clean all; \
+    rm -rf /var/cache/dnf
 
 # ---------------------------------------------------------------------------
 # wkhtmltopdf 0.12.6 with patched Qt (required for headers/footers in reports).
