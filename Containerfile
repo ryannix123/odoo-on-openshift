@@ -46,12 +46,12 @@ RUN set -eux; \
     command -v psql; \
     command -v pg_isready
 
-# Fonts for PDF rendering. liberation-fonts covers Latin reports (Arial/Times
-# metric-compatible). CJK fonts are only needed for Asian-language PDFs and
-# aren't guaranteed in UBI repos, so install them best-effort.
-RUN dnf -y install --setopt=install_weak_deps=False liberation-fonts || true; \
-    dnf -y install --setopt=install_weak_deps=False google-noto-sans-cjk-fonts || \
-        echo "CJK fonts unavailable — Latin PDF rendering still works."; \
+# Fonts for PDF rendering. The wkhtmltopdf RPM installed below pulls its own
+# xorg-x11 DPI fonts as dependencies, so this is just for nicer default report
+# typography (Arial-metric-compatible). Best-effort — never fail the build.
+RUN dnf -y install --setopt=install_weak_deps=False liberation-sans-fonts \
+        liberation-serif-fonts liberation-mono-fonts \
+        || echo "liberation fonts unavailable — wkhtmltopdf's own fonts still render PDFs."; \
     dnf clean all; \
     rm -rf /var/cache/dnf
 
@@ -62,16 +62,16 @@ RUN dnf -y install --setopt=install_weak_deps=False liberation-fonts || true; \
 # ---------------------------------------------------------------------------
 RUN set -eux; \
     ARCH="$(uname -m)"; \
+    # wkhtmltopdf RPM assets are named with the RPM arch (x86_64 / aarch64),
+    # not the Debian arch. This release's newest EL builds are almalinux9 /
+    # centos8; the bundled patched Qt makes the el9 RPM run fine on UBI 10.
     case "${ARCH}" in \
-        x86_64)  WK_ARCH=amd64 ;; \
-        aarch64) WK_ARCH=arm64 ;; \
+        x86_64|aarch64) WK_ARCH="${ARCH}" ;; \
         *) echo "Unsupported arch ${ARCH}"; exit 1 ;; \
     esac; \
     BASE="https://github.com/wkhtmltopdf/packaging/releases/download/${WKHTMLTOPDF_VERSION}"; \
-    # The wkhtmltopdf project publishes per-distro RPMs. UBI 10 is EL10-compatible;
-    # fall back through the EL variants they actually ship until one installs.
     ok=""; \
-    for distro in almalinux10 centos10 almalinux9 centos9; do \
+    for distro in almalinux9 centos8; do \
         url="${BASE}/wkhtmltox-${WKHTMLTOPDF_VERSION}.${distro}.${WK_ARCH}.rpm"; \
         echo "Trying ${url}"; \
         if curl -fsSL -o /tmp/wkhtmltox.rpm "${url}"; then ok="yes"; break; fi; \

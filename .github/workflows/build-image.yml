@@ -39,9 +39,6 @@ jobs:
           # major.minor already; also derive major for a floating tag
           echo "odoo_major=${VER%%.*}" >> "$GITHUB_OUTPUT"
 
-      - name: Set up QEMU
-        uses: docker/setup-qemu-action@v3
-
       - name: Log in to Quay.io
         uses: redhat-actions/podman-login@v1
         with:
@@ -51,7 +48,7 @@ jobs:
 
       - name: Build image
         id: build
-        uses: redhat-actions/buildah-build@v2
+        uses: redhat-actions/buildah-build@v3
         with:
           image: ${{ env.IMAGE_NAME }}
           tags: >-
